@@ -1,8 +1,8 @@
 # GTA VI Launch-Day Twitch CCU Forecaster
 
-[![Competition](https://make.fun/badge/gta6-twitch-ccu-forecast-01/competition.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01)
-[![Rank](https://make.fun/badge/gta6-twitch-ccu-forecast-01/rank.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01)
-[![Reward](https://make.fun/badge/gta6-twitch-ccu-forecast-01/reward.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01)
+[![make.fun · gta6-twitch-ccu-forecast-01](https://make.fun/badge/gta6-twitch-ccu-forecast-01.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01
+[![rank](https://make.fun/badge/gta6-twitch-ccu-forecast-01/endraputra9/gta6-twitch-ccu-forecast-01/rank.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01
+[![reward](https://make.fun/badge/gta6-twitch-ccu-forecast-01/endraputra9/gta6-twitch-ccu-forecast-01/reward.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01
 
 An entry for the make.fun bounty
 [gta6-twitch-ccu-forecast-01](https://make.fun/bounty/gta6-twitch-ccu-forecast-01):
