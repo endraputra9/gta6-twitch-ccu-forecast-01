@@ -1,25 +1,60 @@
-"""Launch-day Twitch audience forecaster (make.fun gta6-twitch-ccu-forecast-01).
+"""Launch-day Twitch audience forecaster, v2 (make.fun gta6-twitch-ccu-forecast-01).
 
-The model, in one paragraph: a launch day's hourly viewer curve, divided by its
-own first hour, has a shape that depends mostly on how big the first hour was.
-A first hour that is already huge means the rolling midnight unlock had already
-swept New Zealand, Australia, Japan and Europe before the UTC day began, and the
-day then builds toward the transatlantic evening overlap; a small first hour
-means the unlock was still to come inside the UTC day, and the curve is a steep
-climb from near zero. So this program pools the launch-day curves of the past
-big launches the case itself supplies (its `comparables`), weights each by how
-close its first hour sits to this case's first hour in log space, and reads the
-five quantiles of each future hour from the weighted distribution of the pool's
-log ratios to their own first hours, fitted as a normal in log space and
-lightly smoothed across neighbouring hours. The forecast is the case's hour-1
-print times those ratio quantiles. Everything is computed from the case file:
-no network, no randomness, no clock, so two runs write the same bytes.
+The model, in one paragraph: a launch day's hourly viewer curve, divided by
+its own first hour, has a shape that depends mostly on how big the first hour
+was, on how the launch unlocked, and on whether the curve is a true launch
+curve at all. A first hour that is already huge means the rolling midnight
+unlock had already swept New Zealand, Australia, Japan and Europe before the
+UTC day began, and the day then builds toward the transatlantic evening
+overlap; a small first hour means the unlock was still to come inside the
+UTC day, and the curve is a steep climb from near zero. So this program
+pools the launch-day curves of the past big launches the case itself
+supplies (its `comparables`), weights each by how close its first hour sits
+to this case's first hour in log space, and reads the five quantiles of
+each future hour from the weighted distribution of the pool's log ratios to
+their own first hours, fitted as a normal in log space and lightly smoothed
+across neighbouring hours. The forecast is the case's hour-1 print times
+those ratio quantiles. Everything is computed from the case file: no
+network, no randomness, no clock, so two runs write the same bytes.
 
-Validation while building: leave-one-out over the 37 launch comparables in the
-kit's practice data (forecast each launch from the other 36) gives a mean
-pinball loss of about 0.39, against about 0.93 for the flat persistence
-forecast on the same pool; on the rolling-midnight targets alone it gives
-about 0.29 against persistence's 0.39.
+What v2 changes over v1, each change gated on out-of-sample validation (see
+"Validation" below):
+
+1. Early-access-contaminated comparables are down-weighted to 0.3. Their
+   recorded release-day curve is not a launch curve: the real launch spike
+   happened days earlier, when the deluxe early access opened, so the
+   release day is a second, flatter peak. Every graded target of this
+   contest (the four practice launches and GTA VI itself) is a true launch
+   with no early access, so those curves are the wrong shape evidence.
+   The contamination is read off each comparable's own `unlock` note (its
+   research tier), never assumed.
+2. Unlock-shape mismatch is down-weighted to 0.3. A comparable whose unlock
+   was a single simultaneous global moment has a spike-and-decay day; one
+   that rolled at midnight local time has the long build described above.
+   When both the comparable's `unlock` note and the case's own `notes`
+   (which state the target's real unlock) name a shape and the shapes
+   differ, the comparable's weight is cut. When either side is unstated,
+   no cut is applied: the size kernel alone decides, as in v1.
+3. The fitted log-spread is scaled by 0.85. Once size and unlock shape are
+   accounted for, the pool's raw cross-sectional spread overstates the
+   conditional spread of a launch like the target; leave-one-out chose
+   0.85 as the calibration that minimised the contest's own loss.
+
+Validation while building (the contest's pinball loss on the log scale):
+leave-one-out over the 37 launch comparables in the kit's practice data
+(forecast each launch from the other 36) and the four practice cases
+themselves, whose answers are the same public SullyGnome series the kit
+was built from. On the launches shaped like the graded targets (rolling
+midnight unlock, no early access) v2's leave-one-out loss is 0.278 against
+v1's 0.301; on the four practice cases it is 0.193 against v1's 0.218
+(every one of the four improves). Over all 37 launches, including the
+early-access and simultaneous targets this contest never grades, the two
+are level (0.395 against 0.393): the changes trade nothing away there.
+Measured end to end through this program on the practice cases, the
+per-case losses move from v1's 0.325 / 0.214 / 0.133 / 0.200 to v2's
+0.286 / 0.167 / 0.124 / 0.196 — all four improve, none is carried by
+another. The program is deterministic (two runs on a case write the same
+bytes) and runs a case in about a twentieth of its 8-second budget.
 
 Run by the grader as `python3 -P -s /bot/main.py` (Python 3.13, standard
 library only). Outside the grader, MAKEFUN_INPUT_DIR and MAKEFUN_OUTPUT_DIR
@@ -30,7 +65,7 @@ import json
 import math
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from statistics import NormalDist
 
@@ -43,8 +78,23 @@ OUTPUT_DIR = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
 
 # Bandwidth of the first-hour similarity kernel, in decades (log10 units).
 # Chosen by leave-one-out cross-validation over the practice comparables:
-# 0.45 forecast the held-out launches best of the widths tried (0.4 to 1.0).
+# 0.45 forecast the held-out launches best of the widths tried (0.4 to 1.0),
+# and stayed best with the v2 weights below in place.
 SIZE_BANDWIDTH = 0.45
+
+# Weight kept by a comparable whose release-day curve is contaminated by an
+# earlier early-access opening (its research tier says so): its day is a
+# second peak, not a launch.
+EARLY_ACCESS_WEIGHT = 0.3
+
+# Weight kept by a comparable whose unlock shape (rolling midnight local vs
+# a single simultaneous global moment) is known and differs from the
+# target's own, as the case's notes state it.
+UNLOCK_MISMATCH_WEIGHT = 0.3
+
+# Calibration of the fitted log-spread, chosen by the same leave-one-out:
+# the pool spread, shrunk by this factor, prices the quantiles honestly.
+SIGMA_SCALE = 0.85
 
 # A comparable counts as a launch only if its release-day curve is nearly
 # whole: its first hour present and at least 20 of the day's 24 hours. This
@@ -57,6 +107,55 @@ MIN_DAY_HOURS = 20
 # to persistence, a flat median at hour 1's print with a log spread growing
 # like a random walk's, 0.15 per square-root hour.
 FALLBACK_SIGMA = 0.15
+
+# Phrases that mark a single simultaneous global unlock in a free-text
+# unlock note. They are checked before the rolling phrases: a note that
+# describes a simultaneous PC unlock alongside console midnights (the
+# Cyberpunk 2077 shape, whose day the simultaneous surge dominates) is a
+# simultaneous launch for shape purposes.
+SIMULTANEOUS_PHRASES = (
+    "single global",
+    "single simultaneous",
+    "simultaneous global",
+    "simultaneous across",
+    "simultaneous midnight",
+    "one global unlock",
+)
+
+# Phrases that mark a rolling midnight-local unlock.
+ROLLING_PHRASES = ("rolling", "midnight local")
+
+
+def unlock_shape(text):
+    """Classify a free-text unlock note: 'simultaneous', 'rolling' or None."""
+    if not text:
+        return None
+    lowered = text.lower()
+    for phrase in SIMULTANEOUS_PHRASES:
+        if phrase in lowered:
+            return "simultaneous"
+    for phrase in ROLLING_PHRASES:
+        if phrase in lowered:
+            return "rolling"
+    return None
+
+
+def target_shape(case):
+    """The target launch's unlock shape, from the case's own notes.
+
+    The notes state the target's real unlock ("real unlock: Rolling
+    midnight local ..."). Only that statement is read; if it names no
+    shape, the whole notes are tried, and if they still name none the
+    shape is unknown and no unlock weighting applies.
+    """
+    notes = case.get("notes") or ""
+    marker = "real unlock"
+    index = notes.lower().find(marker)
+    if index >= 0:
+        shape = unlock_shape(notes[index:index + 300])
+        if shape:
+            return shape
+    return unlock_shape(notes)
 
 
 def parse_instant(text):
@@ -85,8 +184,11 @@ def launch_day_curve(comparable):
 def comparable_pool(case):
     """The pool of past launches usable as shape evidence for this case.
 
-    Each entry carries the launch's first-hour viewers and, for every later
-    hour, the log of that hour's ratio to the first hour.
+    Each entry carries the launch's first-hour viewers, for every later
+    hour the log of that hour's ratio to the first hour, and the two
+    facts the v2 weights read off the launch's own record: whether its
+    release day was contaminated by an earlier early access, and the
+    shape of its unlock.
     """
     pool = []
     for comparable in case.get("comparables", []):
@@ -99,19 +201,32 @@ def comparable_pool(case):
             for hour, viewers in curve.items()
             if hour >= 2
         }
-        pool.append({"first": first, "log_ratios": log_ratios})
+        unlock_note = comparable.get("unlock") or ""
+        pool.append({
+            "first": first,
+            "log_ratios": log_ratios,
+            "contaminated": "early-access-contaminated" in unlock_note.lower(),
+            "shape": unlock_shape(unlock_note),
+        })
     # A fixed order keeps the floating-point sums identical on every run.
     pool.sort(key=lambda entry: entry["first"])
     return pool
 
 
-def similarity_weights(pool, first_hour):
-    """Gaussian weights on the log10 distance between first hours."""
+def similarity_weights(pool, first_hour, shape):
+    """Gaussian weights on the log10 distance between first hours, cut by
+    the v2 factors: early-access contamination, and an unlock shape known
+    to differ from the target's."""
     target = math.log10(max(1.0, first_hour))
     weights = []
     for entry in pool:
         distance = math.log10(entry["first"]) - target
-        weights.append(math.exp(-0.5 * (distance / SIZE_BANDWIDTH) ** 2))
+        weight = math.exp(-0.5 * (distance / SIZE_BANDWIDTH) ** 2)
+        if entry["contaminated"]:
+            weight *= EARLY_ACCESS_WEIGHT
+        if shape and entry["shape"] and entry["shape"] != shape:
+            weight *= UNLOCK_MISMATCH_WEIGHT
+        weights.append(weight)
     return weights
 
 
@@ -167,7 +282,7 @@ def forecast_case(case):
     pool = comparable_pool(case)
     mus, sigmas = [], []
     if pool:
-        weights = similarity_weights(pool, p1)
+        weights = similarity_weights(pool, p1, target_shape(case))
         stats = {}
         for hour in hours:
             pairs = [
@@ -188,7 +303,8 @@ def forecast_case(case):
                     nearest = min(stats, key=lambda other: (abs(other - hour), other))
                     stats[hour] = stats[nearest]
             mus = smooth([stats[hour][0] for hour in hours])
-            sigmas = smooth([stats[hour][1] for hour in hours])
+            sigmas = smooth(
+                [SIGMA_SCALE * stats[hour][1] for hour in hours])
     if not pool:
         for hour in hours:
             mus.append(0.0)
